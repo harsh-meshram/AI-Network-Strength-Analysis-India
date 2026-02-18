@@ -36,17 +36,35 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.virtualcoverage.signalmap.R
+import com.virtualcoverage.signalmap.data.local.entity.SignalMeasurementEntity
+import com.virtualcoverage.signalmap.data.repository.SignalRepository
+import com.virtualcoverage.signalmap.domain.usecase.PrivacyManager
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.util.Calendar
+import javax.inject.Inject
 
 /**
- * Foreground Service for collecting mobile network signal strength data
- * Supports dual-SIM devices and collects RSRP, SINR, and other signal metrics
+ * Foreground Service for collecting mobile network signal strength data.
+ * Supports dual-SIM devices and collects RSRP, SINR, and other signal metrics.
+ * Data is persisted to Room database via SignalRepository.
  */
+@AndroidEntryPoint
 class SignalCollectionService : Service() {
+
+    @Inject lateinit var signalRepository: SignalRepository
+    @Inject lateinit var privacyManager: PrivacyManager
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var locationCallback: LocationCallback
     private var currentLocation: Location? = null
     
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
+
     private val handler = Handler(Looper.getMainLooper())
     private val signalCollectionRunnable = Runnable {
         collectSignalData()
@@ -110,6 +128,7 @@ class SignalCollectionService : Service() {
         Log.d(TAG, "Service destroyed")
         handler.removeCallbacks(signalCollectionRunnable)
         fusedLocationClient.removeLocationUpdates(locationCallback)
+        serviceJob.cancel()
     }
 
     private fun createNotificationChannel() {
@@ -231,12 +250,26 @@ class SignalCollectionService : Service() {
     }
 
     /**
+     * Save measurement to Room database via repository
+     */
+    private fun saveMeasurement(entity: SignalMeasurementEntity) {
+        serviceScope.launch {
+            try {
+                val id = signalRepository.saveMeasurement(entity)
+                Log.d(TAG, "Saved measurement id=$id carrier=${entity.carrierName} rsrp=${entity.rsrp ?: entity.ssRsrp ?: entity.dbm}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save measurement: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * Process 5G NR cell info
      */
     private fun processNrCell(
         cellInfo: CellInfoNr,
         carrierName: String,
-        subId: Int,
+        @Suppress("UNUSED_PARAMETER") subId: Int,
         telephonyManager: TelephonyManager
     ) {
         // Cast to NR-specific types for access to 5G metrics
@@ -249,18 +282,46 @@ class SignalCollectionService : Service() {
         }
         
         // Extract signal metrics
-        val ssRsrp = signalStrength.ssRsrp // Reference Signal Received Power
-        val ssSinr = signalStrength.ssSinr // Signal-to-Interference-plus-Noise Ratio
+        val ssRsrp = signalStrength.ssRsrp
+        val ssSinr = signalStrength.ssSinr
         val csiRsrp = signalStrength.csiRsrp
         
         // Extract cell identifiers
-        val pci = cellIdentity.pci // Physical Cell ID
-        val tac = cellIdentity.tac // Tracking Area Code
-        val nci = cellIdentity.nci // NR Cell Identity
+        val pci = cellIdentity.pci
+        val tac = cellIdentity.tac
+        val nci = cellIdentity.nci
         
         // Determine if it's 5G SA or NSA
         val networkType = detect5GType(telephonyManager)
         
+        val location = currentLocation
+        if (location != null) {
+            val hourOfDay = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            val (h3Res11, h3Res9) = privacyManager.applyHomeLocationFuzzing(
+                location.latitude, location.longitude, hourOfDay
+            )
+
+            val entity = SignalMeasurementEntity(
+                carrierName = carrierName,
+                subscriptionId = subId,
+                networkType = networkType,
+                ssRsrp = ssRsrp,
+                ssSinr = ssSinr,
+                csiRsrp = csiRsrp,
+                pci = pci,
+                tac = tac,
+                ci = nci,
+                h3Index = h3Res11,
+                h3IndexRes9 = h3Res9,
+                latitude = location.latitude,
+                longitude = location.longitude,
+                hashedDeviceId = privacyManager.getHashedDeviceId(),
+                deviceModel = privacyManager.getDeviceModel(),
+                androidVersion = privacyManager.getAndroidVersion()
+            )
+            saveMeasurement(entity)
+        }
+
         Log.d(TAG, """
             |5G NR Signal Data:
             |  Carrier: $carrierName
@@ -273,15 +334,16 @@ class SignalCollectionService : Service() {
             |  NCI: $nci
             |  Location: ${currentLocation?.latitude}, ${currentLocation?.longitude}
         """.trimMargin())
-        
-        // TODO: Save to Room database
-        // TODO: Upload to backend
     }
 
     /**
      * Process 4G LTE cell info
      */
-    private fun processLteCell(cellInfo: CellInfoLte, carrierName: String, subId: Int) {
+    private fun processLteCell(
+        cellInfo: CellInfoLte,
+        carrierName: String,
+        @Suppress("UNUSED_PARAMETER") subId: Int
+    ) {
         val signalStrength = cellInfo.cellSignalStrength
         val cellIdentity = cellInfo.cellIdentity
         
@@ -293,6 +355,34 @@ class SignalCollectionService : Service() {
         val tac = cellIdentity.tac
         val ci = cellIdentity.ci
         
+        val location = currentLocation
+        if (location != null) {
+            val hourOfDay = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            val (h3Res11, h3Res9) = privacyManager.applyHomeLocationFuzzing(
+                location.latitude, location.longitude, hourOfDay
+            )
+
+            val entity = SignalMeasurementEntity(
+                carrierName = carrierName,
+                subscriptionId = subId,
+                networkType = "4G_LTE",
+                rsrp = rsrp,
+                rsrq = rsrq,
+                sinr = sinr,
+                pci = pci,
+                tac = tac,
+                ci = ci.toLong(),
+                h3Index = h3Res11,
+                h3IndexRes9 = h3Res9,
+                latitude = location.latitude,
+                longitude = location.longitude,
+                hashedDeviceId = privacyManager.getHashedDeviceId(),
+                deviceModel = privacyManager.getDeviceModel(),
+                androidVersion = privacyManager.getAndroidVersion()
+            )
+            saveMeasurement(entity)
+        }
+
         Log.d(TAG, """
             |4G LTE Signal Data:
             |  Carrier: $carrierName
@@ -304,15 +394,16 @@ class SignalCollectionService : Service() {
             |  CI: $ci
             |  Location: ${currentLocation?.latitude}, ${currentLocation?.longitude}
         """.trimMargin())
-        
-        // TODO: Save to Room database
-        // TODO: Upload to backend
     }
 
     /**
      * Process 2G/3G GSM cell info
      */
-    private fun processGsmCell(cellInfo: CellInfoGsm, carrierName: String, subId: Int) {
+    private fun processGsmCell(
+        cellInfo: CellInfoGsm,
+        carrierName: String,
+        @Suppress("UNUSED_PARAMETER") subId: Int
+    ) {
         val signalStrength = cellInfo.cellSignalStrength
         val cellIdentity = cellInfo.cellIdentity
         
@@ -322,6 +413,32 @@ class SignalCollectionService : Service() {
         val lac = cellIdentity.lac
         val cid = cellIdentity.cid
         
+        val location = currentLocation
+        if (location != null) {
+            val hourOfDay = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            val (h3Res11, h3Res9) = privacyManager.applyHomeLocationFuzzing(
+                location.latitude, location.longitude, hourOfDay
+            )
+
+            val entity = SignalMeasurementEntity(
+                carrierName = carrierName,
+                subscriptionId = subId,
+                networkType = "2G_GSM",
+                dbm = dbm,
+                asuLevel = asuLevel,
+                lac = lac,
+                ci = cid.toLong(),
+                h3Index = h3Res11,
+                h3IndexRes9 = h3Res9,
+                latitude = location.latitude,
+                longitude = location.longitude,
+                hashedDeviceId = privacyManager.getHashedDeviceId(),
+                deviceModel = privacyManager.getDeviceModel(),
+                androidVersion = privacyManager.getAndroidVersion()
+            )
+            saveMeasurement(entity)
+        }
+
         Log.d(TAG, """
             |2G/3G GSM Signal Data:
             |  Carrier: $carrierName
@@ -331,9 +448,6 @@ class SignalCollectionService : Service() {
             |  CID: $cid
             |  Location: ${currentLocation?.latitude}, ${currentLocation?.longitude}
         """.trimMargin())
-        
-        // TODO: Save to Room database
-        // TODO: Upload to backend
     }
 
     /**
