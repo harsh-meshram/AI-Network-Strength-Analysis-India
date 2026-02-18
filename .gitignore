@@ -1,0 +1,30 @@
+# Android / IntelliJ
+*.iml
+.idea/
+.gradle/
+build/
+local.properties
+*.hprof
+
+# APK files
+*.apk
+*.aar
+*.ap_
+
+# Keystore
+*.jks
+*.keystore
+
+# Generated files
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+output.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Gradle wrapper jar (can regenerate)
+gradle/wrapper/gradle-wrapper.jar
