@@ -82,8 +82,8 @@ dependencies {
     // osmdroid (OpenStreetMap)
     implementation("org.osmdroid:osmdroid-android:6.1.18")
     
-    // H3 Hexagonal Indexing
-    implementation("com.uber:h3:4.1.1")
+    // H3 Hexagonal Indexing - using pure-Kotlin H3Android (no native .so needed)
+    // Replaced com.uber:h3:4.1.1 which crashes on Android ARM64
     
     // Google Play Services Location
     implementation("com.google.android.gms:play-services-location:21.1.0")

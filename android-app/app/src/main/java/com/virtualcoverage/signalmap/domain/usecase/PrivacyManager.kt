@@ -4,7 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
-import com.uber.h3core.H3Core
+import com.virtualcoverage.signalmap.util.H3Android
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.MessageDigest
 import javax.inject.Inject
@@ -22,7 +22,6 @@ import javax.inject.Singleton
 class PrivacyManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private val h3Core: H3Core = H3Core.newInstance()
     private val salt = "vcm_salt_2026" // In production, fetch from server
 
     companion object {
@@ -38,7 +37,7 @@ class PrivacyManager @Inject constructor(
      */
     fun latLngToH3(latitude: Double, longitude: Double, resolution: Int): String {
         return try {
-            h3Core.latLngToCellAddress(latitude, longitude, resolution)
+            H3Android.latLngToCell(latitude, longitude, resolution)
         } catch (e: Exception) {
             Log.e(TAG, "H3 conversion failed: ${e.message}")
             "invalid_h3"
@@ -64,9 +63,7 @@ class PrivacyManager @Inject constructor(
      */
     fun getH3Boundary(h3Index: String): List<Pair<Double, Double>> {
         return try {
-            h3Core.cellToBoundary(h3Index).map { 
-                Pair(it.lat, it.lng) 
-            }
+            H3Android.cellToBoundary(h3Index)
         } catch (e: Exception) {
             Log.e(TAG, "H3 boundary failed: ${e.message}")
             emptyList()
@@ -101,7 +98,6 @@ class PrivacyManager @Inject constructor(
 
         return if (isNightTime(hourOfDay)) {
             // During night hours, use neighborhood precision only
-            // This prevents inferring exact home address
             Log.d(TAG, "Night-time fuzzing applied (hour=$hourOfDay)")
             Pair(h3Res9, h3Res9) // Both set to Res 9 (lower precision)
         } else {
