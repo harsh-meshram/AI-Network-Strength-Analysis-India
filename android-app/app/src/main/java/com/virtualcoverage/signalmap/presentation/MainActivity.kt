@@ -5,12 +5,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.widget.Button
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.virtualcoverage.signalmap.R
+import com.virtualcoverage.signalmap.presentation.collect.CollectFragment
+import com.virtualcoverage.signalmap.presentation.map.MapFragment
 import com.virtualcoverage.signalmap.service.SignalCollectionService
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -34,19 +36,38 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val btnStartCollection = findViewById<Button>(R.id.btn_start_collection)
-        val btnStopCollection = findViewById<Button>(R.id.btn_stop_collection)
+        val bottomNav = findViewById<BottomNavigationView>(R.id.bottom_navigation)
 
-        btnStartCollection.setOnClickListener {
-            if (checkPermissions()) {
-                startSignalCollection()
-            } else {
-                requestPermissions()
+        // Load Map fragment by default
+        if (savedInstanceState == null) {
+            supportFragmentManager.beginTransaction()
+                .replace(R.id.fragment_container, MapFragment())
+                .commit()
+        }
+
+        bottomNav.setOnItemSelectedListener { item ->
+            when (item.itemId) {
+                R.id.nav_map -> {
+                    supportFragmentManager.beginTransaction()
+                        .replace(R.id.fragment_container, MapFragment())
+                        .commit()
+                    true
+                }
+                R.id.nav_collection -> {
+                    supportFragmentManager.beginTransaction()
+                        .replace(R.id.fragment_container, CollectFragment())
+                        .commit()
+                    true
+                }
+                else -> false
             }
         }
 
-        btnStopCollection.setOnClickListener {
-            stopSignalCollection()
+        // Request permissions and start collection on launch
+        if (checkPermissions()) {
+            startSignalCollection()
+        } else {
+            requestPermissions()
         }
     }
 
@@ -88,13 +109,13 @@ class MainActivity : AppCompatActivity() {
             startService(intent)
         }
         isServiceRunning = true
-        Toast.makeText(this, "Signal collection started", Toast.LENGTH_SHORT).show()
     }
 
-    private fun stopSignalCollection() {
+    fun stopSignalCollection() {
         val intent = Intent(this, SignalCollectionService::class.java)
         stopService(intent)
         isServiceRunning = false
-        Toast.makeText(this, "Signal collection stopped", Toast.LENGTH_SHORT).show()
     }
+
+    fun isCollectionRunning(): Boolean = isServiceRunning
 }
