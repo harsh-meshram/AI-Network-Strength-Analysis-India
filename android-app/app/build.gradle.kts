@@ -85,6 +85,11 @@ dependencies {
     // H3 Hexagonal Indexing - using pure-Kotlin H3Android (no native .so needed)
     // Replaced com.uber:h3:4.1.1 which crashes on Android ARM64
     
+    // WorkManager (background sync)
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("androidx.hilt:hilt-work:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
+    
     // Google Play Services Location
     implementation("com.google.android.gms:play-services-location:21.1.0")
     
