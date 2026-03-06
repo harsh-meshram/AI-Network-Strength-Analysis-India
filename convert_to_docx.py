@@ -204,15 +204,15 @@ def add_formatted_text(paragraph, text):
 base = r'H:\AI Network Strength Analysis India'
 
 parse_md_to_docx(
-    os.path.join(base, 'AntiGravity_NonTechnical_Status.md'),
-    os.path.join(base, 'AntiGravity_NonTechnical_Status.docx'),
-    'AntiGravity — Non-Technical Project Status Report'
+    os.path.join(base, 'NonTechnical_Status.md'),
+    os.path.join(base, 'NonTechnical_Status.docx'),
+    'Non-Technical Project Status Report'
 )
 
 parse_md_to_docx(
-    os.path.join(base, 'AntiGravity_Technical_Implementation.md'),
-    os.path.join(base, 'AntiGravity_Technical_Implementation.docx'),
-    'AntiGravity — Technical Implementation Report'
+    os.path.join(base, 'Technical_Implementation.md'),
+    os.path.join(base, 'Technical_Implementation.docx'),
+    'Technical Implementation Report'
 )
 
 print("Done! Both .docx files created.")
