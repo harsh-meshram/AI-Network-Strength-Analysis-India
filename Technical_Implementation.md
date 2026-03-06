@@ -1,6 +1,6 @@
-# AntiGravity — Technical Implementation Report
+# Technical Implementation Report
 
-**Project Name:** AntiGravity (Virtual Coverage Map)  
+**Project Name:** Virtual Coverage Map  
 **Report Date:** 19 February 2026  
 **Prepared For:** Developers, System Architects, and DevOps  
 **Version:** 1.0.0  
@@ -32,9 +32,11 @@ presentation/       → Activities, Fragments, ViewModels (UI layer)
 domain/usecase/      → Business logic (PrivacyManager)
 data/repository/     → Repository abstraction
 data/local/          → Room database, DAOs, entities (data layer)
+data/remote/         → Retrofit API service + DTOs (remote data layer)
 service/             → Android foreground service
+sync/                → WorkManager SyncWorker (background data upload)
 util/                → H3Android utility
-di/                  → Hilt DI modules
+di/                  → Hilt DI modules (Database, Network)
 ```
 
 ### 1.3 Dependency Graph
@@ -43,14 +45,16 @@ di/                  → Hilt DI modules
 |---|---|---|---|
 | **DI** | Dagger Hilt | 2.51 | Constructor injection across all layers |
 | **Database** | Room | 2.6.1 | SQLite abstraction with compile-time query validation |
-| **Networking** | Retrofit + OkHttp | 2.9.0 / 4.12.0 | HTTP client (configured but unused pending backend) |
+| **Networking** | Retrofit + OkHttp | 2.9.0 / 4.12.0 | HTTP client for backend API communication |
+| **Background Sync** | WorkManager | 2.9.0 | Periodic background data upload (every 15 min) |
+| **Hilt WorkManager** | AndroidX Hilt Work | 1.2.0 | DI support for WorkManager workers |
 | **Maps** | osmdroid | 6.1.18 | OpenStreetMap tiles, no API key required |
 | **Location** | Google Play Services Location | 21.1.0 | FusedLocationProvider for GPS |
 | **UI** | Material Design Components | 1.11.0 | BottomNavigationView, Chips, Cards, FAB |
 | **Navigation** | AndroidX Navigation | 2.7.7 | Fragment navigation (partially used) |
 | **Async** | Kotlin Coroutines | 1.8.0 | Structured concurrency on IO and Main dispatchers |
 | **Lifecycle** | Lifecycle + ViewModel + LiveData | 2.7.0 | Lifecycle-aware data observation |
-| **Serialization** | Gson | 2.10.1 | JSON serialization (for future API payloads) |
+| **Serialization** | Gson | 2.10.1 | JSON serialization for API payloads |
 | **Spatial** | H3Android (custom) | N/A | Pure-Kotlin H3 hexagonal indexing |
 
 ### 1.4 Directory Structure
@@ -60,14 +64,17 @@ android-app/
 ├── app/
 │   ├── src/main/
 │   │   ├── java/com/virtualcoverage/signalmap/
-│   │   │   ├── SignalMapApp.kt                          # @HiltAndroidApp Application class
+│   │   │   ├── SignalMapApp.kt                          # @HiltAndroidApp + WorkManager Configuration.Provider
 │   │   │   ├── di/
-│   │   │   │   └── DatabaseModule.kt                    # Hilt @Module (Room DB + DAO providers)
+│   │   │   │   ├── DatabaseModule.kt                    # Hilt @Module (Room DB + DAO providers)
+│   │   │   │   └── NetworkModule.kt                     # Hilt @Module (OkHttp + Retrofit + SignalApiService)
 │   │   │   ├── data/
 │   │   │   │   ├── local/
 │   │   │   │   │   ├── SignalDatabase.kt                # Room @Database (v1)
 │   │   │   │   │   ├── dao/SignalMeasurementDao.kt      # @Dao with 12 query methods
 │   │   │   │   │   └── entity/SignalMeasurementEntity.kt # @Entity with 23 columns
+│   │   │   │   ├── remote/
+│   │   │   │   │   └── SignalApiService.kt               # Retrofit API interface + DTOs
 │   │   │   │   └── repository/SignalRepository.kt       # @Singleton repository
 │   │   │   ├── domain/
 │   │   │   │   └── usecase/PrivacyManager.kt            # DPDP compliance, H3, hashing
@@ -79,6 +86,8 @@ android-app/
 │   │   │   │       └── MapViewModel.kt                  # @HiltViewModel
 │   │   │   ├── service/
 │   │   │   │   └── SignalCollectionService.kt           # Foreground service (479 LOC)
+│   │   │   ├── sync/
+│   │   │   │   └── SyncWorker.kt                        # HiltWorker - background data upload
 │   │   │   └── util/
 │   │   │       └── H3Android.kt                         # Pure-Kotlin H3 implementation
 │   │   ├── res/
@@ -431,6 +440,150 @@ object DatabaseModule {
 
 ---
 
+## 3. Backend Infrastructure
+
+### 2.9 Backend Server (Node.js / TypeScript)
+
+> **Non-Technical Reference:** § 3.9 — "Backend Infrastructure"
+
+**Core Files:**
+
+```
+backend/
+├── src/
+│   ├── server.ts          # Express app setup + startup
+│   ├── config.ts          # Environment variable loading
+│   ├── db.ts              # PostgreSQL connection pool + transactions
+│   ├── migrations.ts      # Auto-run table/index/view creation
+│   ├── schemas.ts         # Zod validation schemas
+│   └── routes/signal.ts   # API route handlers (354 LOC)
+├── package.json
+├── tsconfig.json
+├── .env                   # DB credentials + server config
+└── .env.example
+```
+
+**Tech Stack:**
+
+| Component | Technology | Purpose |
+|---|---|---|
+| **Runtime** | Node.js + TypeScript | Server-side JavaScript with type safety |
+| **Framework** | Express 4.x | HTTP server + routing |
+| **Database** | PostgreSQL 18 + PostGIS | Spatial data storage + geographic queries |
+| **Validation** | Zod | Runtime request body validation |
+| **Security** | Helmet + CORS + Rate Limiting | HTTP headers, cross-origin policy, abuse prevention |
+| **Dev Tools** | nodemon + ts-node | Hot-reload during development |
+
+**API Endpoints:**
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/ingest/signal` | Batch ingest up to 500 measurements per request |
+| `GET` | `/api/v1/heatmap` | H3-aggregated signal data for a bounding box |
+| `GET` | `/api/v1/stats` | Per-carrier measurement counts and signal averages |
+| `GET` | `/api/v1/carriers` | List all carriers with measurement counts |
+| `GET` | `/api/v1/hexagon/:h3Index` | Detailed measurements for a specific H3 cell |
+| `GET` | `/api/v1/nearby` | PostGIS `ST_DWithin` proximity search |
+| `GET` | `/health` | Server + database health check |
+
+**Database Schema (`signal_measurements` table):**
+- 26 columns matching the Android Entity schema
+- `timestamp` stored as `TIMESTAMPTZ` (converted from Unix ms via `to_timestamp($1 / 1000.0)`)
+- `location` column: PostGIS `GEOGRAPHY(POINT, 4326)` auto-populated via trigger from lat/lng
+- Indexes: `h3_index`, `h3_index_res9`, `hashed_device_id`, `carrier_name + timestamp`, `batch_id`
+- Materialized view: `signal_stats` for pre-aggregated carrier statistics
+
+**Zod Validation (`schemas.ts`):**
+- `SignalMeasurementSchema`: Validates all fields with type checking, nullable optionals for signal metrics
+- `BatchIngestSchema`: Wraps measurements array (1–500) + `device_id` string
+- `network_type`: Flexible string (accepts `5G_SA`, `5G_NSA`, `4G_LTE`, `2G_GSM`, `Unknown`)
+
+---
+
+### 2.10 SyncWorker (Background Data Upload)
+
+> **Non-Technical Reference:** § 3.10 — "Automated Data Sync"
+
+**Core Files:**
+- `sync/SyncWorker.kt` (153 LOC) — `@HiltWorker` + `CoroutineWorker`
+- `data/remote/SignalApiService.kt` (68 LOC) — Retrofit interface + DTOs
+- `di/NetworkModule.kt` (66 LOC) — Hilt module providing OkHttp + Retrofit
+- `SignalMapApp.kt` — `Configuration.Provider` for WorkManager + periodic scheduling
+
+**Architecture:**
+
+```
+SignalMapApp.kt
+  └── WorkManager.enqueueUniquePeriodicWork()
+        └── SyncWorker (every 15 min, requires CONNECTED network)
+              ├── SignalRepository.getUnsyncedMeasurements() → Room DB
+              ├── Entity.toDto() → snake_case DTO mapping
+              ├── SignalApiService.ingestSignals(BatchIngestRequest) → Retrofit POST
+              ├── On 201: SignalRepository.markAsSynced(ids)
+              ├── On 4xx: break (server rejecting → stop retrying)
+              ├── On network error: Result.retry() (WorkManager backoff)
+              └── SignalRepository.cleanupOldRecords() (synced > 7 days)
+```
+
+**DTO Mapping (Entity → API):**
+
+| Entity Field (camelCase) | DTO Field (snake_case) | Notes |
+|---|---|---|
+| `timestamp` | `timestamp` | Unix epoch ms |
+| `carrierName` | `carrier_name` | |
+| `networkType` | `network_type` | `4G_LTE`, `5G_SA`, etc. |
+| `h3Index` | `h3_index` | H3 resolution 11 |
+| `h3IndexRes9` | `h3_index_res9` | H3 resolution 9 |
+| `latitude` / `longitude` | `latitude` / `longitude` | |
+| `hashedDeviceId` | `hashed_device_id` | SHA-256 hash |
+| `rsrp`, `rsrq`, `sinr` | `rsrp`, `rsrq`, `sinr` | LTE metrics |
+| `ssRsrp`, `ssSinr` | `ss_rsrp`, `ss_sinr` | 5G NR metrics |
+| `pci`, `tac`, `ci` | `pci`, `tac`, `ci` | Cell identity |
+| `ci` | `nci` | Reused for NR NCI |
+| `subscriptionId` | `sim_slot` | SIM subscription ID |
+
+**NetworkModule Configuration:**
+
+```kotlin
+private const val BASE_URL = "http://192.168.0.109:3000"  // Local Wi-Fi IP
+
+OkHttpClient:
+  - HttpLoggingInterceptor (Level.BODY)
+  - connectTimeout: 30s
+  - readTimeout: 30s
+  - writeTimeout: 60s (large batch uploads)
+  - retryOnConnectionFailure: true
+```
+
+**WorkManager Configuration:**
+
+```kotlin
+// In SignalMapApp.kt
+PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
+    .setConstraints(Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
+        .build())
+    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+    .build()
+
+// ExistingPeriodicWorkPolicy.KEEP → doesn't restart if already enqueued
+```
+
+**AndroidManifest.xml Change:**
+```xml
+<!-- Disabled default WorkManager auto-init (using custom Configuration.Provider) -->
+<provider
+    android:name="androidx.startup.InitializationProvider"
+    android:authorities="${applicationId}.androidx-startup"
+    tools:node="merge">
+    <meta-data
+        android:name="androidx.work.WorkManagerInitializer"
+        tools:node="remove" />
+</provider>
+```
+
+---
+
 ## 3. Current Technical Debt & Known Bugs
 
 ### 3.1 Resolved: H3 JNI Crash (Critical — Fixed)
@@ -468,9 +621,10 @@ object DatabaseModule {
 - The `SignalCollectionService` does not handle `SecurityException` from permission revocation mid-collection.
 - `currentLocation` may be null for an extended period if GPS is slow to acquire, resulting in dropped measurements.
 
-### 3.7 Open: Retrofit/OkHttp Unused
+### 3.7 Resolved: Retrofit/OkHttp Now Active
 
-- Retrofit 2.9.0 and OkHttp 4.12.0 are in the dependency graph but no API interface or endpoint is defined. These are pre-staged for Phase 7 (backend sync).
+- **Previous status:** Retrofit 2.9.0 and OkHttp 4.12.0 were in the dependency graph but unused.
+- **Current status:** ✅ Fully integrated. `NetworkModule.kt` provides `OkHttpClient` → `Retrofit` → `SignalApiService` via Hilt DI. `SyncWorker` uses the service to POST batches to the backend.
 
 ---
 
@@ -503,8 +657,10 @@ object DatabaseModule {
 
 | Component | Status |
 |---|---|
-| **Backend API** | ❌ Not built |
-| **Cloud Database** | ❌ Not provisioned |
+| **Backend API** | ✅ Running (Node.js/TypeScript + Express on port 3000) |
+| **Database** | ✅ PostgreSQL 18 with PostGIS extension |
+| **Data Pipeline** | ✅ Phone → SyncWorker → Express API → PostgreSQL (343 measurements synced) |
+| **Cloud Deployment** | ❌ Local only (same Wi-Fi required) — Railway/Render planned |
 | **CDN / Tile Server** | N/A (uses public OSM Mapnik tiles) |
 | **Play Store Listing** | ❌ Not created |
 | **Crash Reporting (Firebase Crashlytics)** | ❌ Not integrated |

@@ -1,6 +1,6 @@
-# AntiGravity — Non-Technical Project Status Report
+# Non-Technical Project Status Report
 
-**Project Name:** AntiGravity (Virtual Coverage Map)  
+**Project Name:** Virtual Coverage Map  
 **Report Date:** 19 February 2026  
 **Prepared For:** Stakeholders, Business Analysts, and Clients  
 **Version:** 1.0.0  
@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-**AntiGravity** is a mobile application designed to crowdsource mobile network signal strength data across India. The app empowers everyday smartphone users to passively contribute real-world cellular coverage data — including 5G, 4G, and 2G/3G — simply by installing the app on their Android devices.
+**Virtual Coverage Map** is a mobile application designed to crowdsource mobile network signal strength data across India. The app empowers everyday smartphone users to passively contribute real-world cellular coverage data — including 5G, 4G, and 2G/3G — simply by installing the app on their Android devices.
 
 ### Business Objectives
 
@@ -34,15 +34,17 @@ The end-goal is a publicly accessible, continuously-updated heatmap of real mobi
 | **Phase 4: Local Data Storage** | ✅ Complete | Offline-first database for storing all signal measurements on-device. |
 | **Phase 5: Map Visualization** | ✅ Complete | Interactive map displaying a color-coded signal strength heatmap with carrier filtering. |
 | **Phase 6: Collection Dashboard** | ✅ Complete | User-facing screen showing live signal stats, carrier information, and collection controls. |
-| **Phase 7: Backend Data Upload** | ⏳ Pending | Cloud sync to upload collected data from devices to the central backend. |
-| **Phase 8: Carrier Comparison UI** | ⏳ Pending | Dedicated screen for side-by-side carrier performance comparison in a given area. |
-| **Phase 9: H3 Aggregation Pipeline** | ⏳ Pending | Server-side aggregation of crowdsourced data at city/region level. |
+| **Phase 7: Backend Infrastructure** | ✅ Complete | Node.js/TypeScript + Express backend with PostgreSQL, PostGIS, and RESTful API endpoints. |
+| **Phase 8: Automated Data Sync** | ✅ Complete | Android SyncWorker uploads data from phone to backend every 15 minutes over Wi-Fi. |
+| **Phase 9: H3 Aggregation Pipeline** | ✅ Complete | Server-side heatmap aggregation, carrier stats, PostGIS spatial queries, and materialized views. |
+| **Phase 10: Carrier Comparison UI** | ⏳ Pending | Dedicated screen for side-by-side carrier performance comparison in a given area. |
 
 ### Summary
 
-- **6 of 9 milestones complete (~67%)**
-- The core user-facing experience — collecting signal data, viewing live stats, and exploring the heatmap — is fully functional.
-- The remaining milestones are focused on cloud infrastructure and advanced analytics, which do not block on-device functionality.
+- **9 of 10 milestones complete (~90%)**
+- The full end-to-end pipeline is operational: phone collects signals → stores locally → syncs to backend → PostgreSQL stores with PostGIS spatial indexing → API serves heatmap/stats data.
+- **343 real signal measurements** have been successfully synced from a physical device to the central database.
+- The remaining milestone is the Carrier Comparison UI for side-by-side analysis.
 
 ---
 
@@ -125,6 +127,31 @@ Users can tap any hexagon to view details (average signal strength and sample co
 
 ---
 
+### 3.9 Backend Infrastructure (Node.js + PostgreSQL)
+
+**What it does:** A server-side backend built with Node.js/TypeScript and Express receives signal data from all phones and stores it in a PostgreSQL database with PostGIS (spatial queries) extensions. The backend provides RESTful API endpoints for:
+- **Signal ingestion** — Receives batches of up to 500 measurements per request.
+- **Heatmap data** — Returns H3-aggregated signal quality for any geographic bounding box.
+- **Carrier statistics** — Shows total measurements, unique devices, and coverage hexagons per carrier.
+- **Nearby signal lookup** — PostGIS spatial queries find measurements within a radius of any point.
+
+**Why it's valuable:** Centralizes all crowdsourced data from every user's device into a single, queryable database. This is the foundation for the public coverage map.
+
+---
+
+### 3.10 Automated Data Sync (SyncWorker)
+
+**What it does:** Every 15 minutes, the app automatically uploads all unsynced signal measurements from the phone to the backend server, without any user intervention. The sync is:
+- **Automatic** — Runs in the background via Android WorkManager.
+- **Network-aware** — Only syncs when the device has network connectivity.
+- **Resilient** — Retries with exponential backoff on failure.
+- **Efficient** — Uploads in batches of 100 measurements at a time.
+- **Self-cleaning** — Removes synced data older than 7 days from the phone to free storage.
+
+**Why it's valuable:** Users don't need to do anything — data flows from their phone to the central database automatically. Even if the app is closed, WorkManager ensures the sync happens reliably.
+
+---
+
 ## 4. User Journeys / Workflows
 
 ### 4.1 First-Time User Setup
@@ -167,11 +194,11 @@ Users can tap any hexagon to view details (average signal strength and sample co
 
 | # | Item | Type | Impact |
 |---|---|---|---|
-| 1 | **Backend API not yet built.** No cloud server exists to receive uploaded data. | Blocker | Data remains on-device only; no centralized coverage map yet. |
-| 2 | **Backend sync strategy undecided.** Batch upload frequency, retry logic, and conflict resolution need to be designed. | Decision Required | Affects data freshness and mobile data usage. |
-| 3 | **Carrier comparison UI design not finalized.** No mockups or UX direction for the side-by-side comparison screen. | Decision Required | Blocks Phase 8 implementation. |
-| 4 | **ProGuard / R8 not configured for release.** Code shrinking and obfuscation are disabled. | Blocker for Production | APK size will be larger than necessary; no code protection. |
-| 5 | **No user authentication / account system.** The app has no login or user identity concept. | Decision Required | Needed before cloud sync to attribute (anonymously) data to devices. |
+| 1 | ~~**Backend API not yet built.**~~ | ✅ Resolved | Backend is live with Express + PostgreSQL + PostGIS. Data syncs automatically from phones. |
+| 2 | ~~**Backend sync strategy undecided.**~~ | ✅ Resolved | SyncWorker uploads batches of 100 every 15 minutes with retry logic and cleanup. |
+| 3 | **Cloud deployment pending.** Backend currently runs on local machine (same Wi-Fi only). | Decision Required | Needs cloud hosting (Railway/Render/AWS) for public access. |
+| 4 | **Carrier comparison UI design not finalized.** No mockups or UX direction for the comparison screen. | Decision Required | Blocks Phase 10 implementation. |
+| 5 | **ProGuard / R8 not configured for release.** Code shrinking and obfuscation are disabled. | Blocker for Production | APK size will be larger than necessary; no code protection. |
 | 6 | **App not published on Google Play Store.** Currently distributed via debug APK only. | Blocker for Distribution | Limits reach of crowdsourcing effort. |
 | 7 | **Hardcoded privacy salt.** The salt used for device ID hashing is a static string in the source code. | Risk | Should be fetched from the server in production for security. |
 
